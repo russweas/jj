@@ -71,6 +71,46 @@ where
     })
 }
 
+/// Traverses nodes from `start_node` in post-order.
+pub fn post_order<T, NI>(
+    start_node: T,
+    mut neighbors_fn: impl FnMut(&T) -> NI,
+) -> impl Iterator<Item = T>
+where
+    T: Clone + Hash + Eq,
+    NI: IntoIterator<Item = T>,
+{
+    let mut stack = vec![(start_node, false)];
+    let mut visited: HashSet<T> = HashSet::new();
+    iter::from_fn(move || {
+        while let Some((node, processed)) = stack.pop() {
+            if processed {
+                // If we marked it as processed, it means its children
+                // were already added to the stack and processed.
+                return Some(node);
+            }
+            // Mark as visited so we don't start a new DFS from here
+            if !visited.insert(node.clone()) {
+                // The node is already visited, continue.
+                continue;
+            }
+            let neighbors = neighbors_fn(&node).into_iter().collect_vec();
+            // Push the node back onto the stack with processed = true.
+            // It will be popped and yielded AFTER its children.
+            stack.push((node, true));
+            // Push the neighbors onto the stack with processed = false. The neighbors are
+            // added in reverse order, so they are processed in the
+            // original order.
+            for neighbor in neighbors.into_iter().rev() {
+                if !visited.contains(&neighbor) {
+                    stack.push((neighbor, false));
+                }
+            }
+        }
+        None
+    })
+}
+
 /// Builds a list of nodes reachable from the `start` where neighbors come
 /// before the node itself.
 ///
