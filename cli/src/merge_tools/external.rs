@@ -252,6 +252,54 @@ async fn run_mergetool_external_single_file(
     Ok(())
 }
 
+pub async fn run_mergetool_external_single_materialized_file(
+    editor: &ExternalMergeTool,
+    merge_options: &MergeOptions,
+    repo_path: RepoPathBuf,
+    materialized_conflicted_contents: &Merge<BString>,
+    conflict_labels: &ConflictLabels,
+    default_conflict_marker_style: ConflictMarkerStyle,
+) -> Result<Option<Merge<BString>>, ConflictResolveError> {
+    let (conflict_marker_len, exit_status, exit_status_implies_conflict, output_file_contents) =
+        run_mergetool_external_single_materialized_file_helper(
+            editor,
+            merge_options,
+            default_conflict_marker_style,
+            &repo_path,
+            materialized_conflicted_contents,
+            conflict_labels,
+        )?;
+
+    let new_contents = if editor.merge_tool_edits_conflict_markers || exit_status_implies_conflict {
+        tracing::info!(
+            ?exit_status_implies_conflict,
+            "jj is reparsing output for conflicts, `merge-tool-edits-conflict-markers = {}` in \
+             TOML config;",
+            editor.merge_tool_edits_conflict_markers
+        );
+        let (new_contents, _unchanged) = conflicts::update_from_materialized_content(
+            materialized_conflicted_contents,
+            output_file_contents.as_slice(),
+            conflict_marker_len,
+            merge_options,
+        );
+        new_contents
+    } else {
+        Some(Merge::resolved(BString::new(output_file_contents)))
+    };
+
+    // If the exit status indicated there should be conflict markers but there
+    // weren't any, it's likely that the tool generated invalid conflict markers, so
+    // we need to inform the user. If we didn't treat this as an error, the user
+    // might think the conflict was resolved successfully.
+    if exit_status_implies_conflict && new_contents.as_ref().is_none_or(|c| c.is_resolved()) {
+        return Err(ConflictResolveError::ExternalTool(
+            ExternalToolError::InvalidConflictMarkers { exit_status },
+        ));
+    }
+    Ok(new_contents)
+}
+
 fn run_mergetool_external_single_materialized_file_helper(
     editor: &ExternalMergeTool,
     merge_options: &MergeOptions,
